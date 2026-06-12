@@ -29,6 +29,7 @@ license: MIT
 - **CSR 动态渲染文章** → Chrome headless 兜底抓 SSR 后 HTML（3-4MB，含完整正文）
 - **输出结构化 Markdown**（标题/作者/发布时间/封面/正文）
 - **Curl 级速度 + 浏览器级兜底** 两全
+- **跨 AI Agent 平台兼容** — 纯 Python 脚本，不绑定任何 Agent 框架（Hermes Agent / OpenClaw / Claude Code / 任何 CLI 均可用）
 
 ## 安装
 
