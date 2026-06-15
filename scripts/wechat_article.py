@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-微信公众号文章抓取 — 主入口 CLI
-- 4 层降级链：captcha_check → meta_extract → curl_cffi_fetch → sogou_search
-- 不依赖外部 API 服务，纯本地抓取
-- Chrome headless 兜底 CSR 动态渲染
+WeChat Official Account article fetcher — main CLI entry.
+
+- 4-tier fallback chain: captcha_check → meta_extract → curl_cffi_fetch → sogou_search
+- No external API service dependency, fully local
+- Chrome headless fallback for CSR dynamic rendering
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import argparse
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-# 让脚本可独立运行
+# Allow the script to run standalone
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -30,91 +31,93 @@ from strategies import (
 
 @dataclass
 class WechatArticleResult:
-    """统一的抓取结果"""
+    """Unified fetch result."""
     success: bool
     url: str
-    method: str = ""                # 成功时用的策略
+    method: str = ""                # Strategy used on success
     title: str = ""
     author: str = ""
     account: str = ""
     description: str = ""
     cover: str = ""
     publish_time: str = ""
-    content_md: str = ""            # Markdown 正文（可能为空——CSR 限制）
+    content_md: str = ""            # Markdown body (may be empty — CSR limitation)
     content_chars: int = 0
     error: str = ""
-    fallback_urls: list = field(default_factory=list)  # sogou 搜到的转载链接
-    chrome_used: bool = False       # 是否启用了 Chrome headless
+    fallback_urls: list = field(default_factory=list)  # Repost links found via Sogou
+    chrome_used: bool = False       # Whether Chrome headless was used
 
 
 def fetch_article(url: str, want_content: bool = True, timeout: int = 15, use_chrome: bool = True) -> WechatArticleResult:
     """
-    抓取单篇公众号文章。
-    流程：URL 标准化 → captcha 检测 → meta 提取 → 正文抓取（CSR 时启用 Chrome 兜底）→ 失败时返回 sogou 结果
+    Fetch a single WeChat Official Account article.
+
+    Flow: URL normalisation → captcha detection → meta extraction → body fetching
+          (Chrome fallback when CSR-limited) → Sogou results on failure.
 
     Args:
-        url: 公众号文章 URL
-        want_content: 是否抓正文
-        timeout: curl_cffi/requests 超时
-        use_chrome: 当 CSR 抓不到正文时，是否启用本机 Chrome headless 兜底
+        url: WeChat article URL
+        want_content: Whether to fetch the body
+        timeout: curl_cffi/requests timeout in seconds
+        use_chrome: Whether to enable local Chrome headless when CSR returns empty body
     """
     result = WechatArticleResult(success=False, url=url)
 
-    # 1) URL 标准化
+    # 1) URL normalisation
     norm_url = normalize_wechat_url(url)
     if not norm_url:
-        result.error = "URL 为空"
+        result.error = "URL is empty"
         return result
     result.url = norm_url
 
     if not is_valid_wechat_article_url(norm_url):
-        result.error = f"不是合法的 mp.weixin.qq.com 文章 URL: {norm_url}"
+        result.error = f"Not a valid mp.weixin.qq.com article URL: {norm_url}"
         return result
 
-    # 2) 先用 curl_cffi/requests 抓（快、便宜）
+    # 2) First try curl_cffi/requests (fast, cheap)
     fetched = fetch(norm_url, timeout=timeout)
     if not fetched.success:
-        # 网络层失败——直接试 Chrome
+        # Network-level failure — try Chrome directly
         if use_chrome and os.path.exists(CHROME_PATH):
             chrome_r = fetch_with_chrome(norm_url, timeout=timeout + 15, wait_js=2.5)
             result.chrome_used = True
             if chrome_r.success:
                 fetched = FetchResult(success=True, method="chrome_headless", html=chrome_r.html, status_code=200)
             else:
-                result.error = f"curl_cffi 失败 ({fetched.error})；Chrome 也失败 ({chrome_r.error})"
+                result.error = f"curl_cffi failed ({fetched.error}); Chrome also failed ({chrome_r.error})"
                 return result
         else:
-            result.error = f"抓取失败 ({fetched.method}): {fetched.error}"
+            result.error = f"Fetch failed ({fetched.method}): {fetched.error}"
             return result
 
     html = fetched.html
     result.method = fetched.method
 
-    # 3) 验证码检测（必须先于 meta）
+    # 3) Captcha detection (must run before meta)
     if is_captcha_blocked(html):
         reason = captcha_reason(html)
-        result.error = f"被微信反爬墙拦截: {reason}"
+        result.error = f"Blocked by WeChat anti-crawl wall: {reason}"
 
-        # 优先用 Chrome 突破（captcha 墙 Chrome 有时能过）
+        # Prefer Chrome to bypass (Chrome sometimes passes captcha walls)
         if use_chrome and os.path.exists(CHROME_PATH):
             chrome_r = fetch_with_chrome(norm_url, timeout=timeout + 20, wait_js=3.5)
             result.chrome_used = True
             if chrome_r.success and not is_captcha_blocked(chrome_r.html):
                 html = chrome_r.html
                 result.method = "chrome_headless"
-                # 不 return，继续往下走 meta 提取
+                # Don't return — continue to meta extraction
             else:
-                # Chrome 也被拦——降级到 Sogou
+                # Chrome also blocked — fall back to Sogou
                 meta = extract_meta(chrome_r.html if chrome_r.success else html)
                 _fill_sogou_fallbacks(result, meta.title)
                 return result
         else:
-            # 无 Chrome，直接降级 Sogou
+            # No Chrome — go straight to Sogou
             meta = extract_meta(html)
             _fill_sogou_fallbacks(result, meta.title)
             return result
 
-    # 4) meta 提取（永远成功）
+    # 4) Meta extraction (always succeeds)
     meta = extract_meta(html)
     result.title = meta.title
     result.author = meta.author
@@ -123,14 +126,14 @@ def fetch_article(url: str, want_content: bool = True, timeout: int = 15, use_ch
     result.cover = meta.cover
     result.publish_time = meta.publish_time
 
-    # 5) 正文提取
+    # 5) Body extraction
     if want_content:
         content_html = extract_main_content(html)
         content_md = ""
         if content_html and len(content_html) > 200:
             content_md = html_to_markdown(content_html, base_url=norm_url)
 
-        # CSR 限制：正文太短/为空，启用 Chrome 兜底
+        # CSR limitation: body too short or empty, enable Chrome fallback
         if not content_md or len(content_md) < 100:
             if use_chrome and os.path.exists(CHROME_PATH):
                 chrome_r = fetch_with_chrome(norm_url, timeout=timeout + 15, wait_js=3.0)
@@ -138,7 +141,7 @@ def fetch_article(url: str, want_content: bool = True, timeout: int = 15, use_ch
                 if chrome_r.success:
                     chrome_html = chrome_r.html
                     chrome_meta = extract_meta(chrome_html)
-                    # Chrome 拿到的 meta 覆盖（更准确）
+                    # Chrome-obtained meta overrides (more accurate)
                     if chrome_meta.title:
                         result.title = chrome_meta.title
                     if chrome_meta.author:
@@ -162,17 +165,17 @@ def fetch_article(url: str, want_content: bool = True, timeout: int = 15, use_ch
         result.content_md = content_md
         result.content_chars = len(content_md)
 
-    # 6) 判断成功标准
+    # 6) Success criteria
     if result.title or result.description:
         result.success = True
     else:
-        result.error = "HTML 解析失败：无 meta、无正文"
+        result.error = "HTML parse failed: no meta, no body"
 
     return result
 
 
 def _fill_sogou_fallbacks(result: WechatArticleResult, title: str) -> None:
-    """captcha 时的 Sogou 转载兜底"""
+    """Sogou repost fallback when captcha is hit."""
     if not title:
         return
     sogou_results = sogou_search(title, limit=5)
@@ -191,25 +194,25 @@ def _fill_sogou_fallbacks(result: WechatArticleResult, title: str) -> None:
 
 
 def to_markdown(article: WechatArticleResult) -> str:
-    """格式化为 Markdown 输出"""
+    """Format as Markdown output."""
     lines = []
-    title = article.title or "未知标题"
+    title = article.title or "Unknown Title"
     lines.append(f"# {title}")
     lines.append("")
 
     meta_lines = []
     if article.publish_time:
-        meta_lines.append(f"**发布时间**: {article.publish_time}")
+        meta_lines.append(f"**Publish Time**: {article.publish_time}")
     if article.account:
-        meta_lines.append(f"**公众号**: {article.account}")
+        meta_lines.append(f"**Account**: {article.account}")
     elif article.author:
-        meta_lines.append(f"**作者**: {article.author}")
+        meta_lines.append(f"**Author**: {article.author}")
     if article.url:
-        meta_lines.append(f"**原文链接**: {article.url}")
+        meta_lines.append(f"**Original Link**: {article.url}")
     if article.cover:
-        meta_lines.append(f"**封面**: {article.cover}")
+        meta_lines.append(f"**Cover**: {article.cover}")
     if article.method:
-        meta_lines.append(f"**抓取方式**: {article.method}")
+        meta_lines.append(f"**Method**: {article.method}")
 
     if meta_lines:
         lines.extend(meta_lines)
@@ -226,12 +229,12 @@ def to_markdown(article: WechatArticleResult) -> str:
         lines.append("")
 
     if not article.success:
-        lines.append(f"> ⚠️ **抓取失败**: {article.error}")
+        lines.append(f"> ⚠️ **Fetch failed**: {article.error}")
         lines.append("")
 
     if article.fallback_urls:
         lines.append("")
-        lines.append("## 可能的转载链接（搜狗）")
+        lines.append("## Possible Repost Links (Sogou)")
         for fb in article.fallback_urls:
             lines.append(f"- [{fb['title']}]({fb['url']})")
             if fb.get('summary'):
@@ -243,29 +246,29 @@ def to_markdown(article: WechatArticleResult) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="微信公众号文章抓取")
-    parser.add_argument("url", nargs="?", help="公众号文章 URL")
-    parser.add_argument("--json", action="store_true", help="输出 JSON 格式")
-    parser.add_argument("--no-content", action="store_true", help="不抓正文（只拿 meta）")
-    parser.add_argument("--sogou", type=str, help="用标题搜 sogou（绕过 captcha 找转载）")
-    parser.add_argument("--timeout", type=int, default=15, help="超时秒数")
-    parser.add_argument("--no-chrome", action="store_true", help="禁用本机 Chrome headless 兜底")
+    parser = argparse.ArgumentParser(description="WeChat Official Account article fetcher")
+    parser.add_argument("url", nargs="?", help="WeChat article URL")
+    parser.add_argument("--json", action="store_true", help="Output JSON format")
+    parser.add_argument("--no-content", action="store_true", help="Don't fetch body (meta only)")
+    parser.add_argument("--sogou", type=str, help="Search Sogou by title (bypass captcha to find reposts)")
+    parser.add_argument("--timeout", type=int, default=15, help="Timeout in seconds")
+    parser.add_argument("--no-chrome", action="store_true", help="Disable local Chrome headless fallback")
     args = parser.parse_args()
 
     if args.sogou:
-        # 纯搜索模式
+        # Pure search mode
         results = sogou_search(args.sogou, limit=10)
         if args.json:
             print(json.dumps([asdict(r) for r in results], ensure_ascii=False, indent=2))
         else:
-            print(f"## 搜狗微信搜索: {args.sogou}")
+            print(f"## Sogou WeChat Search: {args.sogou}")
             for r in results:
                 print(f"\n### [{r.rank}] {r.title}")
                 print(f"- URL: {r.url}")
                 if r.summary:
-                    print(f"- 摘要: {r.summary}")
+                    print(f"- Summary: {r.summary}")
                 if r.publish_time:
-                    print(f"- 时间: {r.publish_time}")
+                    print(f"- Time: {r.publish_time}")
         return
 
     if not args.url:
@@ -280,7 +283,7 @@ def main():
     )
 
     if args.json:
-        # 移除长字段避免输出爆炸
+        # Strip long fields to avoid output blow-up
         d = asdict(article)
         if not args.no_content and len(d.get('content_md', '')) > 500:
             d['content_md_preview'] = d['content_md'][:500] + "..."
@@ -289,7 +292,7 @@ def main():
     else:
         print(to_markdown(article))
 
-    # 退出码：成功 0，失败 1
+    # Exit code: 0 on success, 1 on failure
     sys.exit(0 if article.success else 1)
 
 

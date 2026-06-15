@@ -1,140 +1,141 @@
 ---
 name: wechat-article
-description: 微信公众号文章抓取工具 — 4 层降级策略（captcha 检测 → meta 提取 → Chrome headless → Sogou 转载搜索）。支持 Markdown/JSON 输出，适配 CSR 动态渲染和反爬墙。
-version: 1.0.0
+description: WeChat Official Account article fetcher with a 4-tier fallback strategy (captcha detection → meta extraction → Chrome headless → Sogou repost search). Supports Markdown/JSON output, handles CSR rendering and anti-bot walls.
+version: 1.1.0
 author: wechat-article-skill contributors
 license: MIT
 ---
 
 # WeChat Article Fetcher
 
-微信公众号文章抓取工具，通过 4 层降级策略最大程度获取文章内容。针对微信的 CSR（客户端渲染）和反爬墙做了专项优化。
+A WeChat Official Account article fetcher that maximises content retrieval through a 4-tier fallback strategy. Specifically optimised for WeChat's CSR (Client-Side Rendering) and anti-bot walls.
 
-## 目录
+## Table of Contents
 
-- [特性](#特性)
-- [安装](#安装)
-- [抓取策略（4 层降级）](#抓取策略4-层降级)
-- [用法](#用法)
-- [输出格式](#输出格式)
-- [API（Python 库模式）](#apipython-库模式)
-- [依赖与兼容性](#依赖与兼容性)
-- [已知限制](#已知限制)
+- [Features](#features)
+- [Installation](#installation)
+- [Fetching Strategy (4 Tiers)](#fetching-strategy-4-tiers)
+- [Usage](#usage)
+- [Output Format](#output-format)
+- [API (Python Library Mode)](#api-python-library-mode)
+- [Dependencies & Compatibility](#dependencies--compatibility)
+- [Known Limitations](#known-limitations)
 - [FAQ](#faq)
+- [Contributing](#contributing)
 
-## 特性
+## Features
 
-- **80% 文章 1.5-3s 完成**（curl_cffi 伪装 TLS JA3 指纹）
-- **验证码墙自动绕过** → 优先 Chrome headless 突破 → 仍失败则 Sogou 找转载
-- **CSR 动态渲染文章** → Chrome headless 兜底抓 SSR 后 HTML（3-4MB，含完整正文）
-- **输出结构化 Markdown**（标题/作者/发布时间/封面/正文）
-- **Curl 级速度 + 浏览器级兜底** 两全
-- **跨 AI Agent 平台兼容** — 纯 Python 脚本，不绑定任何 Agent 框架（Hermes Agent / OpenClaw / Claude Code / 任何 CLI 均可用）
+- **80% of articles complete in 1.5–3s** (curl_cffi impersonates the Chrome TLS JA3 fingerprint)
+- **Automatic captcha-wall bypass** → Chrome headless first → on failure, Sogou repost search
+- **CSR dynamic-rendered articles** → Chrome headless fallback fetches the post-SSR HTML (3–4 MB, with full body)
+- **Structured Markdown output** (title / author / publish time / cover / body)
+- **Curl-level speed + browser-level fallback** — best of both worlds
+- **Cross AI Agent platform compatibility** — pure Python scripts, no framework lock-in (Hermes Agent / OpenClaw / Claude Code / any CLI)
 
-## 安装
+## Installation
 
-### 依赖
+### Dependencies
 
-| 依赖 | 版本要求 | 用途 |
-|------|---------|------|
-| Python | 3.9+ | 运行时 |
-| `requests` | 任意 | 降级 HTTP 抓取 |
-| `curl_cffi` | 任意 | 主 HTTP 抓取（伪装 TLS JA3 指纹） |
-| `websocket-client` | 任意 | Chrome DevTools Protocol（CDP）通信 |
-| Google Chrome / Chromium | 148+ | **可选** — 仅 captcha/CSR 文章需要 |
+| Dependency        | Version       | Purpose                                                  |
+|-------------------|---------------|----------------------------------------------------------|
+| Python            | 3.9+          | Runtime                                                  |
+| `requests`        | any           | Fallback HTTP fetcher                                    |
+| `curl_cffi`       | any           | Primary HTTP fetcher (impersonates TLS JA3 fingerprint)  |
+| `websocket-client`| any           | Chrome DevTools Protocol (CDP) communication             |
+| Google Chrome / Chromium | 148+ | **Optional** — only needed for captcha/CSR articles      |
 
-### 安装步骤
+### Steps
 
 ```bash
-# 1. 克隆仓库
+# 1. Clone the repo
 git clone https://github.com/Diyforfun2026/wechat-article-skill.git
 cd wechat-article-skill
 
-# 2. 安装 Python 依赖
+# 2. Install Python dependencies
 pip install requests curl_cffi websocket-client
 
-# 3. （可选）安装 Chrome
-# 如果没有 Chrome，部分受 captcha 或 CSR 限制的文章无法获取完整正文。
-# 但 meta 信息（标题/作者/时间/封面）始终可以获取。
+# 3. (Optional) Install Chrome
+# Without Chrome, articles behind captcha or limited by CSR cannot be fully fetched.
+# However, meta info (title / author / time / cover) is always available.
 ```
 
-## 抓取策略（4 层降级）
+## Fetching Strategy (4 Tiers)
 
 ```
-URL → captcha_check（必须先于 meta）
-  ├─ 验证码 → 优先 Chrome headless 突破
-  │             └─ 仍被拦 → Sogou 搜索找转载
-  └─ 无验证码 → meta 提取
-       └─ CSR 空（正文 < 200 字符）→ Chrome headless 兜底
-            └─ Chrome 也失败 → meta 完整保留，正文为空
+URL → captcha_check (must run before meta)
+  ├─ Captcha → Chrome headless first
+  │             └─ Still blocked → Sogou repost search
+  └─ No captcha → meta extraction
+       └─ CSR body empty (body < 200 chars) → Chrome headless fallback
+            └─ Chrome also fails → meta retained, body empty
 ```
 
-**关键洞察**：
-- 微信文章正文是 **CSR 动态渲染** → curl 拿到的 `#js_content` 经常为空
-- 但 **meta 标签（og:title, og:description, og:image, publish_time）始终可读**
-- captcha 阻挡的文章 → 用 Sogou 搜同标题转载，聚合到 `fallback_urls`
-- Chrome headless 可在 **8-12s** 内抓完整 SSR 后 HTML（3-4MB）
+**Key insights**:
+- WeChat article body is **CSR dynamic-rendered** → the `#js_content` you get from curl is often empty
+- But **meta tags (`og:title`, `og:description`, `og:image`, `publish_time`) are always readable**
+- For captcha-blocked articles → search Sogou for reposts with the same title, aggregated into `fallback_urls`
+- Chrome headless fetches the full post-SSR HTML (3–4 MB) in **8–12s**
 
-### 各策略详解
+### Strategy Details
 
-#### 第 0 层：验证码检测（必须最先执行）
-- 7 种特征匹配：TCaptcha JS、cap_appid、"环境异常"、"请输入验证码"、"访问频繁"等
-- **为什么先于 meta**：captcha 页面也有 og:title（无意义的验证码页标题），必须先排除
+#### Tier 0: Captcha Detection (must run first)
+- 7 signature matches: TCaptcha JS, `cap_appid`, "环境异常" (env abnormal), "请输入验证码" (enter captcha), "访问频繁" (frequent access), etc.
+- **Why before meta**: captcha pages also have `og:title` (an unhelpful captcha-page title), which must be filtered out
 
-#### 第 1 层：Meta 提取（永远成功）
-- 解析 HTML meta 标签：`og:title`, `og:description`, `og:image`, `og:article:author`, `og:article:published_time`
-- 公众号名称从 `<strong class="profile_meta_nickname">` 提取
-- **永远不失败** — 即使验证码和 Chrome 都失败，meta 至少提供文章标题和摘要
+#### Tier 1: Meta Extraction (always succeeds)
+- Parse HTML meta tags: `og:title`, `og:description`, `og:image`, `og:article:author`, `og:article:published_time`
+- Account name extracted from `<strong class="profile_meta_nickname">`
+- **Never fails** — even when captcha and Chrome both fail, meta provides at least the title and summary
 
-#### 第 2 层：Curl 抓取（最快）
-- **优先 `curl_cffi`**：伪装 Chrome 120 的 TLS JA3 指纹，能过大部分 Cloudflare/微信反爬
-- 降级到 `requests`（很多场景也够用）
-- 对无验证码文章，1.5-3s 完成；正文可能为空（CSR 限制）
+#### Tier 2: Curl Fetch (fastest)
+- **Prefers `curl_cffi`**: impersonates Chrome 120's TLS JA3 fingerprint, bypasses most Cloudflare/WeChat anti-bot
+- Falls back to `requests` (sufficient in many cases)
+- 1.5–3s for non-captcha articles; body may be empty (CSR limitation)
 
-#### 第 3 层：Chrome headless 兜底（最重但最准）
-- 启动独立 Chrome 实例（`--headless=new`），使用临时 `--user-data-dir` 隔离
-- 通过 Chrome DevTools Protocol（CDP）导航、等渲染、取 DOM
-- 适用于：
-  - captcha 突破（80%+ 成功率）
-  - CSR 正文抓取（curl 拿不到 `#js_content` 内容时）
-- 每次调用启动+清理，**不留后台进程**
-- 25s 超时自动 kill
+#### Tier 3: Chrome Headless Fallback (heaviest but most accurate)
+- Launches an independent Chrome instance (`--headless=new`) with a temporary `--user-data-dir` for isolation
+- Navigates via Chrome DevTools Protocol (CDP), waits for render, retrieves DOM
+- Use cases:
+  - Captcha bypass (80%+ success rate)
+  - CSR body fetching (when curl can't get `#js_content` content)
+- Each call starts and cleans up — **no background processes left behind**
+- 25s auto-kill timeout
 
-#### 第 4 层：Sogou 转载搜索（最后兜底）
-- 当 captcha 墙无法突破时，用文章标题搜索 Sogou 微信搜索
-- 返回同标题的转载文章列表（含 publisher, summary, publish_time）
-- **限制**：Sogou 跳转链接无法自动 resolve 到 mp.weixin.qq.com URL（服务端加密 + antispider），用户需要手动点击 Sogou 链接访问原文
+#### Tier 4: Sogou Repost Search (last resort)
+- When captcha wall is unbreakable, search Sogou WeChat Search by article title
+- Returns a list of reposts with the same title (including `publisher`, `summary`, `publish_time`)
+- **Limitation**: Sogou redirect links cannot be automatically resolved to `mp.weixin.qq.com` URLs (server-side encryption + anti-spider). The user must manually click the Sogou link to reach the original.
 
-## 用法
+## Usage
 
-### 抓取单篇文章
+### Fetch a Single Article
 
 ```bash
-# 默认模式（自动启用 Chrome 兜底）
+# Default mode (Chrome fallback auto-enabled)
 python3 scripts/wechat_article.py "https://mp.weixin.qq.com/s/abc"
 
-# 禁用 Chrome（只用 curl_cffi + Sogou，更快但无正文）
+# Disable Chrome (curl_cffi + Sogou only, faster but no body)
 python3 scripts/wechat_article.py --no-chrome "https://mp.weixin.qq.com/s/abc"
 
-# 只拿 meta（最快，用于只想看摘要的场景）
+# Meta-only (fastest, for summary-only use cases)
 python3 scripts/wechat_article.py --no-content "https://mp.weixin.qq.com/s/abc"
 ```
 
-### JSON 输出
+### JSON Output
 
 ```bash
 python3 scripts/wechat_article.py --json "https://mp.weixin.qq.com/s/abc" | jq .
-# 关键字段: method（curl_cffi/chrome_headless）, chrome_used（bool）, content_chars
+# Key fields: method (curl_cffi/chrome_headless), chrome_used (bool), content_chars
 ```
 
-### Sogou 搜索找转载（绕过 captcha）
+### Sogou Repost Search (bypass captcha)
 
 ```bash
-python3 scripts/wechat_article.py --sogou "文章标题关键词"
-# 输出：列表含 Sogou 跳转链接（用户需要手动点击跳到原文）
+python3 scripts/wechat_article.py --sogou "article title keywords"
+# Output: list with Sogou redirect links (user must click to reach the original)
 ```
 
-### 批量处理
+### Batch Processing
 
 ```bash
 cat urls.txt | while read url; do
@@ -142,105 +143,105 @@ cat urls.txt | while read url; do
 done
 ```
 
-## 输出格式
+## Output Format
 
 ```markdown
-# 文章标题
+# Article Title
 
-**发布时间**: 2026-06-10
-**公众号**: 公众号名称
-**原文链接**: https://mp.weixin.qq.com/s/abc
-**封面**: https://mmbiz.qpic.cn/...
-**抓取方式**: curl_cffi
+**Publish Time**: 2026-06-10
+**Account**: Account Name
+**Original Link**: https://mp.weixin.qq.com/s/abc
+**Cover**: https://mmbiz.qpic.cn/...
+**Method**: curl_cffi
 
 ---
 
-> 这是文章摘要（og:description）
+> Article summary (og:description)
 
-[正文 Markdown（CSR 限制时可能为空）]
+[Body in Markdown (may be empty when CSR-limited)]
 
-## 可能的转载链接（搜狗）
-- [转载标题](https://weixin.sogou.com/link?url=...)
+## Possible Repost Links (Sogou)
+- [Repost Title](https://weixin.sogou.com/link?url=...)
 ```
 
-## API（Python 库模式）
+## API (Python Library Mode)
 
 ```python
 from scripts.wechat_article import fetch_article
 
 result = fetch_article(
     "https://mp.weixin.qq.com/s/abc",
-    want_content=True,      # 是否抓正文
-    timeout=15,              # curl 超时
-    use_chrome=True,         # 正文为空时启用 Chrome 兜底
+    want_content=True,      # Fetch body?
+    timeout=15,              # curl timeout (seconds)
+    use_chrome=True,         # Enable Chrome fallback when body is empty
 )
 
-print(f"成功: {result.success}")
-print(f"方式: {result.method}")
-print(f"标题: {result.title}")
-print(f"公众号: {result.account}")
-print(f"发布时间: {result.publish_time}")
-print(f"正文: {result.content_md[:200]}...")
+print(f"Success: {result.success}")
+print(f"Method: {result.method}")
+print(f"Title: {result.title}")
+print(f"Account: {result.account}")
+print(f"Publish Time: {result.publish_time}")
+print(f"Body: {result.content_md[:200]}...")
 ```
 
-## 依赖与兼容性
+## Dependencies & Compatibility
 
-| 环境 | 兼容性 |
-|------|--------|
-| macOS | ✅ 完整支持（Chrome headless + curl_cffi） |
-| Linux | ✅ 需要安装 Chromium/Chrome 以启用 headless 兜底 |
-| Windows | ⚠️ 理论可运行（未测试） |
-| Docker | ⚠️ 需要 `--no-sandbox` 参数（已内置） |
+| Environment | Compatibility                                                  |
+|-------------|----------------------------------------------------------------|
+| macOS       | ✅ Fully supported (Chrome headless + curl_cffi)               |
+| Linux       | ✅ Chromium/Chrome required to enable headless fallback        |
+| Windows     | ⚠️ Theoretically works (untested)                              |
+| Docker      | ⚠️ Needs `--no-sandbox` flag (built-in)                        |
 
-### 各抓取路径耗时
+### Fetching Path Latency
 
-| 路径 | 耗时 | 成功率 | 备注 |
-|------|------|--------|------|
-| curl_cffi（直通） | 1.5-3s | ~80% 无验证码 | 正文可能 CSR 空 |
-| Chrome headless | 8-12s | >95% | 含启动 + JS 渲染 |
-| Sogou 转载搜索 | 1-2s | ~80% | 不保证命中 |
+| Path                       | Latency  | Success Rate       | Notes                                  |
+|----------------------------|----------|--------------------|----------------------------------------|
+| `curl_cffi` (direct)       | 1.5–3s   | ~80% no-captcha    | Body may be CSR-empty                  |
+| Chrome headless            | 8–12s    | >95%               | Includes launch + JS render            |
+| Sogou repost search        | 1–2s     | ~80%               | Hit not guaranteed                     |
 
-### Python 版本兼容
+### Python Version Compatibility
 
-| 特性 | 3.9+ | 3.8 | <3.8 |
-|------|------|-----|------|
-| `from __future__ import annotations` | ✅ | ✅ | ❌ |
-| `dataclasses` | ✅ | `pip install dataclasses` | ❌ |
-| `urllib.request` | ✅ | ✅ | ✅ |
-| `websocket-client` | ✅ | ✅ | ✅ |
+| Feature                              | 3.9+ | 3.8                | <3.8 |
+|--------------------------------------|------|--------------------|------|
+| `from __future__ import annotations` | ✅   | ✅                 | ❌   |
+| `dataclasses`                        | ✅   | `pip install dataclasses` | ❌ |
+| `urllib.request`                     | ✅   | ✅                 | ✅   |
+| `websocket-client`                   | ✅   | ✅                 | ✅   |
 
-> **推荐 Python 3.9+**
+> **Python 3.9+ recommended**
 
-## 已知限制
+## Known Limitations
 
-| 场景 | 说明 | 应对 |
-|------|------|------|
-| 验证码墙（"环境异常"） | meta 为空 | Chrome 突破（80%+ 能过）→ 仍失败 → Sogou 转载 |
-| CSR 动态渲染 | curl 拿 js_content 为空 | Chrome headless 抓 SSR 后 HTML |
-| 视频/音频嵌入 | Turndown 简化为 `<video>`/`<audio>` 标签 | Markdown 渲染器需支持 |
-| 大图懒加载 | `data-src` 没解析 | 待优化 |
-| 24 小时阅读量限制 | 老文章无 publish_time 字段 | 仅 og:title/description 可信 |
-| Sogou 跳转链接 | 不是 mp.weixin.qq.com URL | 用户需要手动点击链接访问 |
+| Scenario                              | Description                                                            | Workaround                                                       |
+|---------------------------------------|------------------------------------------------------------------------|------------------------------------------------------------------|
+| Captcha wall ("环境异常" / environment abnormal) | Meta is empty                                                          | Chrome bypass (80%+ pass) → on failure → Sogou repost            |
+| CSR dynamic rendering                 | `curl` returns empty `js_content`                                      | Chrome headless fetches post-SSR HTML                             |
+| Video / audio embeds                  | Turndown simplifies to `<video>`/`<audio>` tags                        | Markdown renderer must support them                               |
+| Lazy-loaded large images              | `data-src` not resolved                                                | To be optimised                                                  |
+| 24h view count limit                  | Old articles lack `publish_time` field                                 | Only `og:title`/`description` reliable                           |
+| Sogou redirect links                  | Not `mp.weixin.qq.com` URLs                                            | User must click the link manually                                 |
 
 ## FAQ
 
-### Q: 为什么不用 jina.ai / r.jina.ai？
-jina.ai 在某些网络环境下 IPv6 不可达导致超时。本工具完全不依赖外部服务，纯本地自建。
+### Q: Why not just use jina.ai / r.jina.ai?
+jina.ai may be unreachable due to IPv6 routing issues in some networks. This tool has zero external service dependencies — fully self-hosted.
 
-### Q: 需要登录微信吗？
-不需要。当前版本不实现登录态。如果未来需要支持需要登录的文章，可通过 Chrome 导出 cookie 到 `wechat.cookies` 文件启用。
+### Q: Do I need to log in to WeChat?
+No. The current version doesn't implement login state. If login-gated article support is needed in the future, you can export cookies via Chrome to a `wechat.cookies` file to enable it.
 
-### Q: Sogou 搜索会被封 IP 吗？
-Sogou 有频次风控。建议不要超过 5 QPS，调用间至少 sleep 2s。代码中已有风控检测（验证码/安全验证/访问过于频繁），命中时自动返回空结果。
+### Q: Will Sogou search get my IP rate-limited?
+Sogou has rate limiting. Recommend no more than 5 QPS, with at least 2s sleep between calls. The code already includes rate-limit detection (captcha / security verification / "访问过于频繁" / too-frequent access); on hit, it returns an empty result.
 
-### Q: 可以不装 Chrome 吗？
-可以。加了 `--no-chrome` 参数后，受 captcha 或 CSR 限制的文章无法获取正文，但 meta 信息（标题、作者、时间、封面）始终可获取。
+### Q: Can I run it without Chrome?
+Yes. With the `--no-chrome` flag, articles behind captcha or limited by CSR cannot have their body fetched, but meta info (title, author, time, cover) is always available.
 
-## 贡献
+## Contributing
 
-欢迎 Issue / PR！可以关注以下几个方向：
+Issues and PRs are welcome! Areas worth focusing on:
 
-- [ ] 懒加载图片处理（`data-src` → `src`）
-- [ ] 表格转 Markdown
-- [ ] Docker 镜像 / pip 包
-- [ ] 更多反爬策略适配
+- [ ] Lazy-loaded image handling (`data-src` → `src`)
+- [ ] Table-to-Markdown conversion
+- [ ] Docker image / pip package
+- [ ] More anti-crawl strategy adapters

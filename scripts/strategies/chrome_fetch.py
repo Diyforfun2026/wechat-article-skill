@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-策略 4（可选/重武器）：本机 Chrome headless 抓取
-- 适用于 CSR 限制或 captcha 不严重的文章
-- 启动 ~1.5s，抓取 ~2-3s
-- 使用 Chrome DevTools Protocol (CDP) via pychrome 或更简单的 subprocess
+Strategy 4 (optional / heavy weapon): local Chrome headless fetcher.
 
-设计原则：
-- 不留后台进程（每次调用启动独立 Chrome 实例）
-- 用 --user-data-dir 隔离（不污染用户主 Chrome）
-- 超过 30s 自动 kill
+- Use cases: CSR-limited or mild-captcha articles
+- Launch ~1.5s, fetch ~2–3s
+- Chrome DevTools Protocol (CDP) via `websocket-client`
+
+Design principles:
+- No background processes left behind (each call starts an independent Chrome instance)
+- `--user-data-dir` for isolation (no pollution of the user's main Chrome)
+- 30s auto-kill timeout
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ class ChromeFetchResult:
 
 
 def _find_free_port() -> int:
-    """找一个空闲端口给 Chrome DevTools"""
+    """Find a free port for Chrome DevTools."""
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -46,7 +47,7 @@ def _find_free_port() -> int:
 
 
 def _wait_for_devtools(port: int, timeout: float = 10.0) -> bool:
-    """等 Chrome DevTools 端点就绪"""
+    """Wait for the Chrome DevTools endpoint to be ready."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -60,8 +61,9 @@ def _wait_for_devtools(port: int, timeout: float = 10.0) -> bool:
 
 def fetch_with_chrome(url: str, timeout: int = DEFAULT_TIMEOUT, wait_js: float = 2.5) -> ChromeFetchResult:
     """
-    用本机 Chrome headless 抓取 URL。
-    wait_js: 等待 JS 渲染的秒数（微信 CSR 需要 ~2s）。
+    Fetch a URL with local Chrome headless.
+
+    wait_js: seconds to wait for JS rendering (WeChat CSR needs ~2s).
     """
     if not os.path.exists(CHROME_PATH):
         return ChromeFetchResult(
@@ -72,10 +74,10 @@ def fetch_with_chrome(url: str, timeout: int = DEFAULT_TIMEOUT, wait_js: float =
     port = _find_free_port()
     user_data_dir = tempfile.mkdtemp(prefix="wechat-fetch-")
 
-    # Chrome 命令行参数
+    # Chrome command-line arguments
     args = [
         CHROME_PATH,
-        "--headless=new",                  # 新版 headless
+        "--headless=new",                  # New headless mode
         "--disable-gpu",
         "--no-sandbox",
         "--disable-dev-shm-usage",
@@ -93,7 +95,7 @@ def fetch_with_chrome(url: str, timeout: int = DEFAULT_TIMEOUT, wait_js: float =
         "--hide-scrollbars",
         "--window-size=1280,800",
         "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-        "about:blank",                     # 先开 about:blank，等会儿导航
+        "about:blank",                     # Open about:blank first, navigate later
     ]
 
     proc = None
@@ -103,17 +105,17 @@ def fetch_with_chrome(url: str, timeout: int = DEFAULT_TIMEOUT, wait_js: float =
             args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            start_new_session=True,         # 独立进程组，方便 kill
+            start_new_session=True,         # Independent process group, easy to kill
         )
 
-        # 等 DevTools 就绪
+        # Wait for DevTools to be ready
         if not _wait_for_devtools(port, timeout=8):
             return ChromeFetchResult(
                 success=False,
-                error="Chrome DevTools 启动超时",
+                error="Chrome DevTools startup timeout",
             )
 
-        # 找新开的 target（about:blank）
+        # Find the newly opened target (about:blank)
         targets_url = f"http://127.0.0.1:{port}/json"
         with urllib.request.urlopen(targets_url, timeout=3) as r:
             targets = json.loads(r.read())
@@ -124,10 +126,10 @@ def fetch_with_chrome(url: str, timeout: int = DEFAULT_TIMEOUT, wait_js: float =
         if not target:
             return ChromeFetchResult(
                 success=False,
-                error="找不到 page target",
+                error="Could not find page target",
             )
 
-        # 打开新的 WebSocket 连到 page target
+        # Open a new WebSocket to the page target
         import websocket  # pip install websocket-client
         ws = websocket.create_connection(
             target["webSocketDebuggerUrl"],
@@ -144,11 +146,11 @@ def fetch_with_chrome(url: str, timeout: int = DEFAULT_TIMEOUT, wait_js: float =
                 ws.send(json.dumps(msg))
                 return mid[0]
 
-            # 导航到目标 URL
+            # Navigate to the target URL
             send("Page.enable")
             send("Page.navigate", {"url": url})
 
-            # 等 Page.loadEventFired 或超时
+            # Wait for Page.loadEventFired or timeout
             load_deadline = time.time() + timeout
             while time.time() < load_deadline:
                 try:
@@ -161,10 +163,10 @@ def fetch_with_chrome(url: str, timeout: int = DEFAULT_TIMEOUT, wait_js: float =
                 if time.time() - start_time > timeout:
                     break
 
-            # 再等 JS 渲染
+            # Wait for JS render
             time.sleep(wait_js)
 
-            # 取 HTML
+            # Get HTML
             send("DOM.getDocument", {"depth": -1, "pierce": True})
             while True:
                 try:
@@ -174,9 +176,9 @@ def fetch_with_chrome(url: str, timeout: int = DEFAULT_TIMEOUT, wait_js: float =
                         doc = msg["result"]["root"]
                         break
                 except Exception:
-                    return ChromeFetchResult(success=False, error="取 DOM 超时")
+                    return ChromeFetchResult(success=False, error="DOM retrieval timeout")
 
-            # 序列化 HTML
+            # Serialise HTML
             def get_outer_html(node_id: str) -> str:
                 send("DOM.getOuterHTML", {"nodeId": node_id, "outerHTMLPolicy": "prefer"})
                 while True:
@@ -212,7 +214,7 @@ def fetch_with_chrome(url: str, timeout: int = DEFAULT_TIMEOUT, wait_js: float =
                     proc.kill()
                 except Exception:
                     pass
-        # 清理 user data dir
+        # Clean up user data dir
         try:
             import shutil
             shutil.rmtree(user_data_dir, ignore_errors=True)
@@ -229,7 +231,7 @@ if __name__ == "__main__":
     if r.error:
         print(f"Error: {r.error}")
     if r.success:
-        # 检查 meta
+        # Check meta
         m = re.search(r'<meta\s+property="og:title"\s+content="([^"]+)"', r.html)
         if m:
             print(f"og:title = {m.group(1)}")

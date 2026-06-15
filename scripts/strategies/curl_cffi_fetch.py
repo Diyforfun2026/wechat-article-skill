@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-策略：curl_cffi/requests 直接抓取 + HTML→Markdown 转换
-- 优先 curl_cffi（伪装 TLS JA3 指纹，能过部分 Cloudflare/反爬）
-- 降级到 requests
-- 即使正文是 CSR（js_content 为空），仍能拿 meta
+Strategy: curl_cffi/requests direct fetch + HTML→Markdown conversion.
+
+- Prefers curl_cffi (impersonates TLS JA3 fingerprint, bypasses some Cloudflare/anti-crawl)
+- Falls back to requests
+- Even when the body is CSR (js_content empty), meta can still be retrieved
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import sys
 from typing import Optional
 from dataclasses import dataclass
 
-# User-Agent 选 Chrome 120，Windows NT（部分 CDN 对 macOS UA 不友好）
+# User-Agent picks Chrome 120 on Windows NT (some CDNs are unfriendly to macOS UA)
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -31,7 +32,7 @@ class FetchResult:
 
 
 def _try_curl_cffi(url: str, timeout: int = 15) -> FetchResult:
-    """优先 curl_cffi（伪装 TLS 指纹）"""
+    """Prefers curl_cffi (impersonates TLS fingerprint)."""
     try:
         from curl_cffi import requests as cffi_requests  # type: ignore
     except ImportError:
@@ -56,7 +57,7 @@ def _try_curl_cffi(url: str, timeout: int = 15) -> FetchResult:
                 status_code=r.status_code,
                 error=f"HTTP {r.status_code}",
             )
-        # 微信对文本响应通常 ~1MB，正文；验证码页 ~2KB
+        # WeChat text responses are typically ~1MB with body; captcha pages are ~2KB
         return FetchResult(
             success=True,
             method="curl_cffi",
@@ -68,7 +69,7 @@ def _try_curl_cffi(url: str, timeout: int = 15) -> FetchResult:
 
 
 def _try_requests(url: str, timeout: int = 15) -> FetchResult:
-    """降级到 requests（很多场景就够用了）"""
+    """Falls back to requests (sufficient in many cases)."""
     try:
         import requests  # type: ignore
     except ImportError:
@@ -104,18 +105,19 @@ def _try_requests(url: str, timeout: int = 15) -> FetchResult:
 
 def fetch(url: str, timeout: int = 15, prefer: str = "curl_cffi") -> FetchResult:
     """
-    抓取 URL 原始 HTML。
+    Fetch the raw HTML of a URL.
+
     prefer: "curl_cffi" | "requests" | "auto"
     """
     if prefer == "curl_cffi":
         r = _try_curl_cffi(url, timeout)
         if r.success:
             return r
-        # 降级
+        # Fallback
         r2 = _try_requests(url, timeout)
         if r2.success:
             return r2
-        # 都不行——返回 curl_cffi 的错误（更具体）
+        # Both failed — return the curl_cffi error (more specific)
         return r
 
     if prefer == "requests":
@@ -127,7 +129,7 @@ def fetch(url: str, timeout: int = 15, prefer: str = "curl_cffi") -> FetchResult
             return r2
         return r
 
-    # auto: 哪个能用用哪个
+    # auto: whichever works
     r = _try_curl_cffi(url, timeout)
     if r.success:
         return r
@@ -135,7 +137,7 @@ def fetch(url: str, timeout: int = 15, prefer: str = "curl_cffi") -> FetchResult
 
 
 # ========================
-# HTML → Markdown（简化版 Turndown 思路）
+# HTML → Markdown (simplified Turndown-style)
 # ========================
 
 STRIPPED_TAGS = [
@@ -143,29 +145,30 @@ STRIPPED_TAGS = [
     "dialog", "header", "footer", "nav", "aside", "svg",
 ]
 
-# 微信特有的"垃圾"选择器（OpenCLI 用 cleanSelectors 注入）
+# WeChat-specific "junk" selectors (OpenCLI injects these via cleanSelectors)
 WX_CLEAN_SELECTORS = [
     "script", "style", "noscript",
-    "#js_share_notice",       # 分享提示
-    "#js_pc_qr_code",         # 底部二维码
-    "#js_toobar3",            # 工具栏
-    ".qr_code_pc",            # 二维码区
-    ".reward_area",           # 赞赏
-    ".rich_media_tool",       # 工具条
-    "#js_tags_section",       # 标签区
-    ".weui_dialog",           # 弹窗
+    "#js_share_notice",       # Share notice
+    "#js_pc_qr_code",         # Bottom QR code
+    "#js_toobar3",            # Toolbar
+    ".qr_code_pc",            # QR code area
+    ".reward_area",           # Tip / reward area
+    ".rich_media_tool",       # Rich-media toolbar
+    "#js_tags_section",       # Tag area
+    ".weui_dialog",           # Pop-up dialog
 ]
 
 
 def extract_main_content(html: str) -> str:
     """
-    从微信文章 HTML 提取 #js_content 内 HTML。
-    失败时返回空串。
+    Extract the inner HTML of `#js_content` from a WeChat article.
+
+    Returns an empty string on failure.
     """
     if not html:
         return ""
 
-    # 微信正文容器
+    # WeChat body container
     m = re.search(
         r'<div[^>]*id=["\']js_content["\'][^>]*>(.*?)</div>\s*<script',
         html,
@@ -174,7 +177,7 @@ def extract_main_content(html: str) -> str:
     if m:
         return m.group(1)
 
-    # 兜底：id="js_content"
+    # Fallback: id="js_content"
     m = re.search(r'<div[^>]*id=["\']js_content["\'][^>]*>(.*)', html, re.S | re.I)
     if m:
         return m.group(1)
@@ -184,20 +187,21 @@ def extract_main_content(html: str) -> str:
 
 def html_to_markdown(html: str, base_url: str = "") -> str:
     """
-    极简 HTML→Markdown。
-    比不上 Turndown，但能保留段落/图片/链接/粗体。
+    Minimal HTML → Markdown converter.
+
+    Not as good as Turndown, but preserves paragraphs / images / links / bold / italic.
     """
     if not html:
         return ""
 
     s = html
 
-    # 1) 去垃圾标签（开标签 + 闭标签）
+    # 1) Strip junk tags (open + close)
     for tag in STRIPPED_TAGS:
         s = re.sub(rf"<{tag}\b[^>]*>.*?</{tag}>", "", s, flags=re.S | re.I)
         s = re.sub(rf"<{tag}\b[^>]*/?>", "", s, flags=re.I)
 
-    # 2) 微信特有选择器（粗略，按 id/class 模式）
+    # 2) WeChat-specific selectors (rough, by id/class pattern)
     for sel in WX_CLEAN_SELECTORS:
         if sel.startswith("#"):
             sel_re = re.escape(sel[1:])
@@ -206,15 +210,15 @@ def html_to_markdown(html: str, base_url: str = "") -> str:
             sel_re = re.escape(sel[1:])
             s = re.sub(rf'<[^>]*class=["\'][^"\']*{sel_re}[^"\']*["\'][^>]*>.*?</[^>]+>', "", s, flags=re.S | re.I)
 
-    # 3) 块级元素 → 换行
+    # 3) Block elements → newlines
     for tag in ("p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "section", "blockquote"):
         s = re.sub(rf"<{tag}\b[^>]*>", "\n\n", s, flags=re.I)
         s = re.sub(rf"</{tag}>", "\n", s, flags=re.I)
         s = re.sub(rf"<{tag}\b[^>]*/>", "\n", s, flags=re.I)
 
-    # 4) 标题
+    # 4) Headings (placeholder for future enhancement)
     for i in range(1, 7):
-        # 已经处理过开闭标签了，现在用占位符
+        # Open/close tags already handled above; use placeholders if needed
         pass
 
     # 5) <a href="...">text</a> → [text](href)
@@ -251,7 +255,7 @@ def html_to_markdown(html: str, base_url: str = "") -> str:
     # 9) <code> → `xxx`
     s = re.sub(r"<code\b[^>]*>(.*?)</code>", r"`\1`", s, flags=re.S | re.I)
 
-    # 10) 去剩余所有 HTML 标签
+    # 10) Strip all remaining HTML tags
     s = re.sub(r"<[^>]+>", "", s)
 
     # 11) HTML entities
@@ -264,7 +268,7 @@ def html_to_markdown(html: str, base_url: str = "") -> str:
          .replace("&#39;", "'")
     )
 
-    # 12) 合并多余空行
+    # 12) Collapse extra blank lines
     s = re.sub(r"\n{3,}", "\n\n", s)
     s = re.sub(r"[ \t]+\n", "\n", s)
     s = s.strip()
@@ -273,11 +277,11 @@ def html_to_markdown(html: str, base_url: str = "") -> str:
 
 
 if __name__ == "__main__":
-    # 自测
+    # Self-test
     sample = '''
     <p>Hello <strong>world</strong>!</p>
     <p>This is a <a href="https://example.com">link</a>.</p>
-    <p><img src="https://example.com/img.jpg" alt="测试图片"></p>
+    <p><img src="https://example.com/img.jpg" alt="Test image"></p>
     <script>alert('xss')</script>
     '''
     print(html_to_markdown(sample))

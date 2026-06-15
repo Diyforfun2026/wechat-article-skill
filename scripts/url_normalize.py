@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-微信公众号文章 URL 标准化
-- 借自 OpenCLI clis/weixin/download.js 的 stripBoundaryWrapChars + normalizeWechatUrl
-- Python 实现：去引号/尖括号包壳，去反斜杠转义，解 HTML entities，强制 https
+WeChat Official Account article URL normalisation.
+
+- Adapted from OpenCLI's `clis/weixin/download.js` `stripBoundaryWrapChars` + `normalizeWechatUrl`
+- Python port: strip quote/angle-bracket wrapping, unescape backslash, decode HTML entities, force https
 """
 
 from __future__ import annotations
 import re
 from urllib.parse import urlparse, urlunparse
 
-# 9 对常见的"包壳"引号/括号（用户从微信/Word/Pages 复制时常见）
+# 9 common "wrapping" quote/bracket pairs (often seen when users copy from WeChat/Word/Pages)
 WRAPPING_PAIRS = [
     ('"', '"'),
     ("'", "'"),
@@ -27,7 +28,7 @@ TRAILING = {p[1] for p in WRAPPING_PAIRS} | {'>'}
 
 
 def strip_boundary_chars(s: str) -> str:
-    """去前后 4 层内的引号/尖括号包壳（不动 URL 内部字符）"""
+    """Strip up to 4 layers of quote/angle-bracket wrapping on each end (does not touch inner URL chars)."""
     for _ in range(4):
         before = s
         for open_q, close_q in WRAPPING_PAIRS:
@@ -45,8 +46,9 @@ def strip_boundary_chars(s: str) -> str:
 
 def normalize_wechat_url(raw: str) -> str:
     """
-    标准化微信公众号文章 URL。
-    返回标准化后的字符串；空串/无效输入返回空串。
+    Normalise a WeChat Official Account article URL.
+
+    Returns the normalised string; returns an empty string for empty/invalid input.
     """
     if not raw:
         return ""
@@ -54,13 +56,13 @@ def normalize_wechat_url(raw: str) -> str:
     if not s:
         return ""
 
-    # 1) 去包壳
+    # 1) Strip wrapping
     s = strip_boundary_chars(s)
 
-    # 2) 去反斜杠转义
+    # 2) Unescape backslashes
     s = re.sub(r'\\+([:/&?=#%])', r'\1', s)
 
-    # 3) 解 HTML entities
+    # 3) Decode HTML entities
     s = (
         s.replace('&amp;', '&')
          .replace('&lt;', '<')
@@ -68,11 +70,11 @@ def normalize_wechat_url(raw: str) -> str:
          .replace('&quot;', '"')
     )
 
-    # 4) 允许裸主机名
+    # 4) Allow bare hostname
     if s.startswith('mp.weixin.qq.com/') or s.startswith('//mp.weixin.qq.com/'):
         s = 'https://' + s.lstrip('/')
 
-    # 5) 强制 https
+    # 5) Force https
     try:
         p = urlparse(s)
         if p.scheme in ('http', 'https') and p.hostname and p.hostname.lower() == 'mp.weixin.qq.com':
@@ -85,7 +87,7 @@ def normalize_wechat_url(raw: str) -> str:
 
 
 def is_valid_wechat_article_url(url: str) -> bool:
-    """判断是否为合法的 mp.weixin.qq.com 文章 URL"""
+    """Check whether the URL is a valid mp.weixin.qq.com article URL."""
     if not url:
         return False
     try:
@@ -94,14 +96,14 @@ def is_valid_wechat_article_url(url: str) -> bool:
         return False
     if p.hostname != 'mp.weixin.qq.com':
         return False
-    # 文章短链格式 /s/xxx 或带 ?__biz=...&mid=...
+    # Article short-link format /s/xxx or with ?__biz=...&mid=...
     if '/s/' in p.path or '__biz=' in p.query:
         return True
     return False
 
 
 if __name__ == "__main__":
-    # 简单自测
+    # Simple self-test
     test_cases = [
         '"https://mp.weixin.qq.com/s/abc123"',
         "“https://mp.weixin.qq.com/s/abc123”",
