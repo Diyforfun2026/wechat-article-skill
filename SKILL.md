@@ -47,7 +47,7 @@ license: MIT
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/你的用户名/wechat-article-skill.git
+git clone https://github.com/Diyforfun2026/wechat-article-skill.git
 cd wechat-article-skill
 
 # 2. 安装 Python 依赖
