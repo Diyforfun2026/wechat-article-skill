@@ -1,5 +1,5 @@
 """
-策略包：captcha_check / meta_extract / curl_cffi_fetch / sogou_search / chrome_fetch
+Strategy package: captcha_check / meta_extract / curl_cffi_fetch / sogou_search / chrome_fetch
 """
 from .captcha_check import is_captcha_blocked, captcha_reason
 from .meta_extract import extract_meta, ArticleMeta, meta_to_dict

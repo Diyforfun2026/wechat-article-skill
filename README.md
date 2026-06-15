@@ -3,40 +3,40 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
-微信公众号文章抓取工具 — 4 层降级策略应对反爬墙和 CSR 动态渲染。
+A WeChat Official Account article fetcher with a 4-tier fallback strategy to handle anti-bot walls and CSR (Client-Side Rendering).
 
-## 亮点
+## Highlights
 
-- **80% 文章 1.5-3s** 完成（curl_cffi 伪装 TLS JA3 指纹）
-- **Chrome headless 兜底**：captcha 墙和 CSR 空正文不再头疼
-- **Sogou 转载搜索**：验证码墙后的最后一道防线
-- **零外部依赖**：不依赖 jina.ai / 任何第三方 API
-- **跨平台兼容**：纯 Python 脚本，Hermes Agent / OpenClaw / Claude Code / 任何 CLI 均可用
-- **结构化输出**：Markdown 或 JSON，适合程序化处理
+- **80% of articles complete in 1.5–3s** (curl_cffi impersonates the Chrome TLS JA3 fingerprint)
+- **Chrome headless fallback**: captcha walls and CSR-empty body no longer a problem
+- **Sogou repost search**: the last line of defense when a captcha wall blocks you
+- **Zero external dependencies**: no reliance on jina.ai or any third-party API
+- **Cross-platform**: pure Python scripts, work with Hermes Agent / OpenClaw / Claude Code / any CLI
+- **Structured output**: Markdown or JSON, ready for programmatic processing
 
-## 快速开始
+## Quick Start
 
 ```bash
-# 安装依赖
+# Install dependencies
 pip install requests curl_cffi websocket-client
 
-# 抓一篇试试
+# Try fetching an article
 python3 scripts/wechat_article.py "https://mp.weixin.qq.com/s/xxx"
 ```
 
-## 抓取策略
+## Fetching Strategy
 
 ```
-URL → captcha 检测
-  ├─ 验证码 → Chrome headless → 仍被拦 → Sogou 找转载
-  └─ 正常 → meta 提取 → CSR 正文空 → Chrome 兜底
+URL → captcha detection
+  ├─ Captcha → Chrome headless → still blocked → Sogou repost search
+  └─ Clean   → meta extraction → CSR body empty → Chrome fallback
 ```
 
-## 文档
+## Documentation
 
-- [SKILL.md](SKILL.md) — 完整使用文档（安装、API、限制、FAQ）
-- [references/wechat-anti-crawl.md](references/wechat-anti-crawl.md) — 反爬技术细节与验证过的方案
+- [SKILL.md](SKILL.md) — Full usage docs (install, API, limitations, FAQ)
+- [references/wechat-anti-crawl.md](references/wechat-anti-crawl.md) — Anti-crawl technical details and verified solutions
 
-## 协议
+## License
 
 MIT

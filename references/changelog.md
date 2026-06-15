@@ -1,55 +1,64 @@
 # Changelog
 
+## 1.1.0 — 2026-06-15
+
+### Internationalisation
+- Full English translation of all user-facing documentation: `README.md`, `SKILL.md`, `references/changelog.md`, `references/wechat-anti-crawl.md`
+- All Python scripts (`scripts/wechat_article.py` + 5 strategy modules) — docstrings, comments, and CLI output translated to English
+- YAML frontmatter `description` in `SKILL.md` rewritten in English
+- Goal: make the skill accessible to all WeChat-content developers worldwide
+
 ## 1.0.0 — 2026-06-12
 
-### 架构
-- 4 层降级链：captcha_check → meta_extract → curl_cffi_fetch → sogou_search
-- Chrome headless 集成：走 Chrome DevTools Protocol (CDP) via `websocket-client`
+### Architecture
+- 4-tier fallback chain: `captcha_check` → `meta_extract` → `curl_cffi_fetch` → `sogou_search`
+- Chrome headless integration: communicates via Chrome DevTools Protocol (CDP) using `websocket-client`
 
-### 新增
-- **`scripts/strategies/chrome_fetch.py`**: 独立 Chrome 实例 headless 抓取
-  - 启动 `--headless=new` + 临时 `--user-data-dir` 隔离
-  - CDP 通信：导航 → 等 Page.loadEventFired → 额外 JS 渲染等待
-  - 25s 超时自动 kill，不留后台进程
-- **主入口 `wechat_article.py`**:
-  - `--no-chrome` CLI 参数
-  - `--json` 输出模式
-  - `--no-content` 仅 meta 模式
-  - `--sogou` 搜狗搜索模式
-  - CSR/Captcha 自动 Chrome 兜底
+### Added
+- **`scripts/strategies/chrome_fetch.py`**: independent Chrome instance headless fetcher
+  - Launches `--headless=new` with a temporary `--user-data-dir` for isolation
+  - CDP communication: navigate → wait for `Page.loadEventFired` → extra JS-render wait
+  - 25s auto-kill timeout, no background processes left behind
+- **Main entry `wechat_article.py`**:
+  - `--no-chrome` CLI flag
+  - `--json` output mode
+  - `--no-content` meta-only mode
+  - `--sogou` Sogou-search mode
+  - Automatic Chrome fallback for CSR / captcha
 
-### 修复
-- 修复 `captcha_check.py` 误判：旧规则 `window.cgiData\s*=` 将 `window.cgiDataNew` 误判为 captcha
-  - 改为精确匹配：`cap_appid\s*[:=]\s*["']?\d{6,}` + 完整短语组合
+### Fixed
+- Fixed `captcha_check.py` false positive: the old rule `window.cgiData\s*=` would mis-flag `window.cgiDataNew` as captcha
+  - Replaced with exact matches: `cap_appid\s*[:=]\s*["']?\d{6,}` + full phrase combinations
 
-### 验证数据
-| 测试场景 | 结果 |
-|---------|------|
-| 无验证码文章（3 例） | curl_cffi 直通，获取全正文 |
-| CSR + captcha 双重限制 | Chrome 拿到完整正文（4K+ 字符） |
-| captcha 墙 | Chrome 突破成功（3.9K 字符正文） |
-| Sogou 转载搜索 | 命中同标题转载文章 |
+### Validation Data
 
-### 技术细节
-- **URL 标准化**（`scripts/url_normalize.py`）: 9 对引号/角括号包壳处理 + HTML entity 解码 + 强制 https
-- **HTML→Markdown**（`scripts/strategies/curl_cffi_fetch.py`）:
-  - 块级元素 → 换行，`<a>` → `[text](href)`，`<img>` → `![alt](src)`
-  - 12 个垃圾标签过滤（script, style, noscript 等）
-  - 7 个微信特有选择器清除（分享提示、二维码、工具栏等）
-- **验证码检测**（7 种特征）: TCaptcha JS, cap_appid, "环境异常" 等
-- **Sogou 搜索**（`scripts/strategies/sogou_search.py`）:
-  - URL 构造 + UA + Referer
-  - 以 `id="sogou_vr_\d+_box_\d+"` 锚定真正结果（避免顶部导航 li 干扰）
-  - 图片链接过滤（跳过 `sogou_vr_\d+_img_\d+` 和 `article_image_*`）
-  - 时间字段清洗（去掉 `document.write(timeConvert('...'))` JS 占位）
+| Test Scenario                     | Result                                            |
+|-----------------------------------|---------------------------------------------------|
+| Non-captcha articles (3 cases)    | `curl_cffi` direct, full body retrieved           |
+| CSR + captcha double-restriction  | Chrome got full body (4K+ chars)                  |
+| Captcha wall                      | Chrome bypass succeeded (3.9K char body)          |
+| Sogou repost search               | Hit repost articles with the same title           |
 
-### 自创设计
-- 验证码检测必须先于 meta（captcha 页面也有 og:title，无意义）
-- `fallback_urls` 字段：captcha 命中时自动搜 Sogou 找转载
-- 4 层降级链的顺序设计：快（curl）→ 重（Chrome）→ 兜底（Sogou）
+### Technical Details
+- **URL normalisation** (`scripts/url_normalize.py`): 9 quote/angle-bracket wrapping pairs + HTML entity decoding + force-https
+- **HTML → Markdown** (`scripts/strategies/curl_cffi_fetch.py`):
+  - Block elements → newlines, `<a>` → `[text](href)`, `<img>` → `![alt](src)`
+  - 12 junk-tag filters (script, style, noscript, etc.)
+  - 7 WeChat-specific selector removals (share notices, QR codes, toolbars, etc.)
+- **Captcha detection** (7 signatures): TCaptcha JS, `cap_appid`, "环境异常" (environment abnormal), etc.
+- **Sogou search** (`scripts/strategies/sogou_search.py`):
+  - URL construction + UA + Referer
+  - Anchor on real results via `id="sogou_vr_\d+_box_\d+"` (avoid top-nav `li` interference)
+  - Image link filtering (skip `sogou_vr_\d+_img_\d+` and `article_image_*`)
+  - Time field cleaning (strip `document.write(timeConvert('...'))` JS placeholders)
 
-### 已知方向（待社区贡献）
-- [ ] 懒加载图片处理（`data-src` → `src`）
-- [ ] 表格转 Markdown
-- [ ] 登录态 cookie 支持
-- [ ] Docker 镜像 / pip 包
+### Original Design Choices
+- Captcha detection must run before meta (captcha pages also have `og:title`, which is meaningless)
+- `fallback_urls` field: automatically search Sogou for reposts when captcha hits
+- 4-tier chain order: fast (curl) → heavy (Chrome) → fallback (Sogou)
+
+### Known Areas (Community Contributions Welcome)
+- [ ] Lazy-loaded image handling (`data-src` → `src`)
+- [ ] Table-to-Markdown
+- [ ] Login-state cookie support
+- [ ] Docker image / pip package

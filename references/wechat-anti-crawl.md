@@ -1,103 +1,95 @@
-# 微信公众号反爬应对（实战经验汇总）
+# WeChat Anti-Crawl Strategies (Battle-Tested Notes)
 
-> 持续更新。每条都是经过验证的失败模式 + 应对方案。
+> Continuously updated. Each entry is a verified failure mode + working solution.
 
-## 验证失败的方案
+## Approaches That Failed
 
-### 1. 单纯 `requests.get` 微信
+### 1. Plain `requests.get` on WeChat
+- **Symptom**: 80% of articles rate-limited / returned "环境异常" (environment abnormal) page
+- **Cause**: Python `requests` TLS fingerprint is identified as non-browser
+- **Solution**: Must use `curl_cffi` to impersonate Chrome JA3
 
-- **现象**: 80% 文章被风控 / 返回 "环境异常" 页面
-- **原因**: Python requests 的 TLS 指纹被识别为非浏览器
-- **应对**: 必须用 `curl_cffi` 伪装 Chrome JA3
+### 2. Web Archive (web.archive.org) for body
+- **Symptom**: HTML contains the `js_content` container, but its inner body is empty
+- **Cause**: WeChat uses CSR; the body content is not in the initial HTML
+- **Solution**: Web Archive can only fall back to meta-level data
 
-### 2. Web Archive (web.archive.org) 抓正文
+### 3. jina.ai alone
+- **Symptom**: In some network environments (especially pure IPv6), `r.jina.ai` times out repeatedly
+- **Cause**: IPv6 routing compatibility issues
+- **Solution**: No external services — pure local `curl_cffi` + Chrome
 
-- **现象**: HTML 含 js_content 容器，但内部为空
-- **原因**: 微信 CSR 动态渲染，正文内容不在初始 HTML
-- **应对**: Web Archive 只能降级到 meta 级别
+## Approaches That Work
 
-### 3. 仅 jina.ai 抓取
+### A. Direct `curl_cffi` Fetch
+- **Scenario**: Non-captcha articles
+- **Latency**: 1.5–3s
+- **Output**: full meta, but `js_content` body often empty (CSR limitation)
+- **Code**: `scripts/strategies/curl_cffi_fetch.py::fetch(url, prefer="curl_cffi")`
 
-- **现象**: 部分网络环境（尤其是纯 IPv6）下 r.jina.ai 持续超时
-- **原因**: IPv6 路由兼容性问题
-- **应对**: 不依赖外部服务，纯本地 curl_cffi + Chrome
+### B. Meta Tag Extraction
+- **Scenario**: **All** non-captcha articles
+- **Latency**: <100ms
+- **Output**: title, description, author, cover, publish time
+- **Code**: `scripts/strategies/meta_extract.py::extract_meta(html)`
 
-## 验证有效的方案
+### C. Chrome Headless Fallback
+- **Scenario**: captcha wall / CSR body empty
+- **Latency**: 8–12s (includes launch + JS render + DOM retrieval)
+- **Output**: full post-SSR HTML (3–4 MB)
+- **Code**: `scripts/strategies/chrome_fetch.py::fetch_with_chrome(url)`
 
-### A. curl_cffi 直接抓
-
-- **场景**: 无验证码文章
-- **耗时**: 1.5-3s
-- **产出**: meta 完整，正文 js_content 经常空（CSR 限制）
-- **代码**: `scripts/strategies/curl_cffi_fetch.py::fetch(url, prefer="curl_cffi")`
-
-### B. Meta 标签提取
-
-- **场景**: **所有**非验证码文章
-- **耗时**: <100ms
-- **产出**: 标题、描述、作者、封面、发布时间
-- **代码**: `scripts/strategies/meta_extract.py::extract_meta(html)`
-
-### C. Chrome headless 兜底
-
-- **场景**: captcha 墙 / CSR 正文为空
-- **耗时**: 8-12s（含启动 + JS 渲染 + DOM 抓取）
-- **产出**: 完整 SSR 后 HTML（3-4MB）
-- **代码**: `scripts/strategies/chrome_fetch.py::fetch_with_chrome(url)`
-
-### D. 搜狗微信搜索（Sogou）
-
-- **场景**: 找转载页（绕过 captcha）
-- **耗时**: 1-2s
-- **产出**: 同标题转载列表
-- **注意**: Sogou 自身有风控（"访问过于频繁"），频次不要超过 5 QPS
-- **代码**: `scripts/strategies/sogou_search.py::search(query)`
+### D. Sogou WeChat Search
+- **Scenario**: Find reposts (bypass captcha)
+- **Latency**: 1–2s
+- **Output**: list of reposts with the same title
+- **Caution**: Sogou has its own rate limit ("访问过于频繁" / too-frequent access), keep below 5 QPS
+- **Code**: `scripts/strategies/sogou_search.py::search(query)`
 
 ### E. html_to_markdown
+- **Scenario**: After obtaining the `#js_content` container
+- **Supported**: paragraphs / headings / links / images / bold / italic / code blocks
+- **Not supported**: complex tables / math formulas / nested lists
+- **Code**: `scripts/strategies/curl_cffi_fetch.py::html_to_markdown(html)`
 
-- **场景**: 拿到 #js_content 容器后提取正文
-- **支持**: 段落/标题/链接/图片/粗体/斜体/代码块
-- **不支持**: 复杂表格/数学公式/嵌套列表
-- **代码**: `scripts/strategies/curl_cffi_fetch.py::html_to_markdown(html)`
+## Captcha Detection Patterns
 
-## 验证码识别模式
-
-7 种特征匹配（任一命中即判定 captcha）：
+7 signature matches (any one hit → captcha):
 
 ```python
 CAPTCHA_MARKERS = [
-    r'captcha\.gtimg\.com/TCaptcha\.js',     # 腾讯 TCaptcha 容器
-    r'cap_appid\s*[:=]\s*["\']?\d+',          # captcha 配置
-    r'window\.cgiData\s*=',                    # 老版 captcha 容器
-    r'环境异常',                                # 微信特定提示
-    r'请输入验证码',                            # 需手动输入
-    r'访问频繁',                                # 频次风控
-    r'异常访问',                                # 行为风控
+    r'captcha\.gtimg\.com/TCaptcha\.js',     # Tencent TCaptcha container
+    r'cap_appid\s*[:=]\s*["\']?\d+',          # captcha config
+    r'window\.cgiData\s*=',                    # legacy captcha container
+    r'环境异常',                                # WeChat-specific prompt (env abnormal)
+    r'请输入验证码',                            # requires manual input
+    r'访问频繁',                                # frequency-based rate limit
+    r'异常访问',                                # behaviour-based rate limit
 ]
 ```
 
-`captcha_reason()` 返回人类可读的原因（如 "TCaptcha 验证码墙（cap_appid 触发）"）。
+`captcha_reason()` returns a human-readable reason (e.g. "TCaptcha captcha wall (cap_appid triggered)").
 
-## 各抓取方式对比
+## Comparison of Fetch Methods
 
-| 方式 | 验证码文章 | 无验证码文章 |
-|------|-----------|------------|
-| curl_cffi + meta | ✅ captcha 检测准确 | ✅ meta 完整 |
-| 抓正文 #js_content | ❌（captcha） | ⚠️ CSR 经常空 |
-| Chrome headless | ✅（80%+ 突破率） | ✅ 正文完整 |
-| Sogou 搜转载 | ✅（拿到转载网址） | — |
-| HTML→Markdown | ❌（captcha） | ✅（有正文时） |
+| Method                       | Captcha Articles              | Non-captcha Articles       |
+|------------------------------|-------------------------------|----------------------------|
+| `curl_cffi` + meta           | ✅ captcha detection accurate | ✅ full meta               |
+| Fetch body `#js_content`     | ❌ (captcha)                  | ⚠️ CSR often empty         |
+| Chrome headless              | ✅ (80%+ bypass rate)         | ✅ full body               |
+| Sogou repost search          | ✅ (gets repost URLs)         | —                          |
+| HTML → Markdown              | ❌ (captcha)                  | ✅ (when body present)     |
 
-## 反爬升级时间线
+## Anti-Crawl Escalation Timeline
 
-- **2025-Q4**: 微信开始加强反爬，约 30% 文章触发 captcha
-- **2026-Q1**: 微信上线更严格的"环境异常"墙，大量阅读文章被拦
-- **2026-Q2**: Sogou 微信搜索仍可用（约 80% 可达），需控制频次
+- **2025-Q4**: WeChat started tightening anti-crawl, ~30% of articles triggered captcha
+- **2026-Q1**: WeChat rolled out stricter "环境异常" (env-abnormal) walls, blocking many read articles
+- **2026-Q2**: Sogou WeChat Search still usable (~80% reachable), but rate-limit required
 
-## 关键学习
+## Key Lessons
 
-1. **不要相信单点**: 同一篇文章在不同 IP/UA/时间可能 captcha 状态不同
-2. **降级链要短**: 用户等不了 4 层降级全部失败
-3. **Meta 永远可信**: 即使 captcha，og:description 通常是真实摘要
-4. **captcha 检测必须先于 meta**：captcha 页面也有 og:title（无意义），必须先排除
-5. **Sogou 不要压测**: 频次高了直接封 IP，建议 sleep 2s
+1. **Don't trust a single point in time**: the same article may have different captcha status from different IP / UA / time
+2. **Keep the fallback chain short**: users can't wait for all 4 tiers to fail
+3. **Meta is always trustworthy**: even with captcha, `og:description` is usually the real summary
+4. **Captcha detection must run before meta**: captcha pages also have `og:title` (meaningless), must be filtered out first
+5. **Don't stress-test Sogou**: high frequency → IP ban; recommend `sleep 2s` between calls
