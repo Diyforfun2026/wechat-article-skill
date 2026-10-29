@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![微信文章](https://img.shields.io/badge/微信-公众号-green.svg)](#) [![Anti-Crawl](https://img.shields.io/badge/反爬-对抗-orange.svg)](#)
-[![Topics](https://img.shields.io/badge/topics-wechat%20%7C%20mp.weixin%20%7C%20anti--crawl%20%7C%20scraper-blueviolet.svg)](#-主题-tags)
+[![Topics](https://img.shields.io/badge/topics-wechat%20%7C%20mp--weixin%20%7C%20anti--crawl%20%7C%20scraper-blueviolet.svg)](https://github.com/topics/wechat-article)
 
 > 一个面向 AI Agent 的微信公众号文章抓取工具，**两条抓取路径**（快路径 + 四层降级链），专门解决微信公众号反爬墙和前端 CSR 渲染导致的拿不到正文问题。
 >
