@@ -1,18 +1,19 @@
 ---
 name: wechat-article
-description: WeChat Official Account article fetcher with a 4-tier fallback strategy (captcha detection → meta extraction → Chrome headless → Sogou repost search). Supports Markdown/JSON output, handles CSR rendering and anti-bot walls.
-version: 1.1.0
+description: WeChat Official Account article fetcher with a fast path (desktop UA + curl + regex, 2-3s, zero dependencies) and a 4-tier fallback strategy (captcha detection → meta extraction → Chrome headless → Sogou repost search). Supports Markdown/JSON output, handles CSR rendering and anti-bot walls.
+version: 1.2.0
 author: wechat-article-skill contributors
 license: MIT
 ---
 
 # WeChat Article Fetcher
 
-A WeChat Official Account article fetcher that maximises content retrieval through a 4-tier fallback strategy. Specifically optimised for WeChat's CSR (Client-Side Rendering) and anti-bot walls.
+A WeChat Official Account article fetcher with **two fetching paths**: a zero-dependency fast path (desktop UA + curl + regex) and a 4-tier fallback strategy. Specifically optimised for WeChat's CSR (Client-Side Rendering) and anti-bot walls.
 
 ## Table of Contents
 
 - [Features](#features)
+- [Fast Path (recommended)](#fast-path-recommended)
 - [Installation](#installation)
 - [Fetching Strategy (4 Tiers)](#fetching-strategy-4-tiers)
 - [Usage](#usage)
@@ -25,16 +26,44 @@ A WeChat Official Account article fetcher that maximises content retrieval throu
 
 ## Features
 
-- **80% of articles complete in 1.5–3s** (curl_cffi impersonates the Chrome TLS JA3 fingerprint)
+- **Fast path: full body in 2–3s** — a desktop-browser UA makes WeChat server-render `#js_content`; plain `curl` + regex extracts it with **zero dependencies and zero Chrome launches**
+- **80% of articles complete in 1.5–3s** on the fallback path (curl_cffi impersonates the Chrome TLS JA3 fingerprint)
 - **Automatic captcha-wall bypass** → Chrome headless first → on failure, Sogou repost search
 - **CSR dynamic-rendered articles** → Chrome headless fallback fetches the post-SSR HTML (3–4 MB, with full body)
 - **Structured Markdown output** (title / author / publish time / cover / body)
-- **Curl-level speed + browser-level fallback** — best of both worlds
 - **Cross AI Agent platform compatibility** — pure Python scripts, no framework lock-in (Hermes Agent / OpenClaw / Claude Code / any CLI)
+
+## Fast Path (recommended)
+
+`scripts/fetch_fast.py` uses a **desktop browser UA** with plain `curl` and extracts `#js_content` with regex.
+
+**Why this works**: although WeChat renders article bodies client-side, a request carrying a desktop UA usually receives the body already server-rendered as static HTML. That means no `curl_cffi`, no Chrome process, no 8–12 second launch penalty.
+
+**Critical**: the UA must be a *desktop* browser UA. A WeChat in-app browser UA usually yields a CSR-empty `#js_content` and forces a Chrome fallback.
+
+```bash
+# Print body to stdout
+python3 scripts/fetch_fast.py "https://mp.weixin.qq.com/s/abc"
+
+# Title only
+python3 scripts/fetch_fast.py "https://mp.weixin.qq.com/s/abc" --title
+
+# JSON output
+python3 scripts/fetch_fast.py "https://mp.weixin.qq.com/s/abc" --json
+
+# Write to a Markdown file
+python3 scripts/fetch_fast.py "https://mp.weixin.qq.com/s/abc" -o article.md
+```
+
+**Fallback rule**: if the extracted body is **< 200 chars** (CSR-empty) or the page contains captcha markers (`环境异常` / `完成验证后即可继续访问`), switch to `wechat_article.py` (the 4-tier chain). `fetch_fast.py` prints a `NOTE:` line to stderr in both cases.
+
+**Extraction boundary**: the script uses a non-greedy match up to `</div><script`, falling back to `<div class="rich_media_tool"`. A greedy `.*` would swallow the ~2.9 MB of "微信扫一扫 / 点赞 / 在看" chrome that trails the article — always use a bounded match.
 
 ## Installation
 
 ### Dependencies
+
+The **fast path needs nothing** — it shells out to `curl` and uses only the Python standard library. The 4-tier chain adds:
 
 | Dependency        | Version       | Purpose                                                  |
 |-------------------|---------------|----------------------------------------------------------|
@@ -51,13 +80,22 @@ A WeChat Official Account article fetcher that maximises content retrieval throu
 git clone https://github.com/Diyforfun2026/wechat-article-skill.git
 cd wechat-article-skill
 
-# 2. Install Python dependencies
+# 2. Install Python dependencies (only for the 4-tier chain)
 pip install requests curl_cffi websocket-client
 
 # 3. (Optional) Install Chrome
 # Without Chrome, articles behind captcha or limited by CSR cannot be fully fetched.
 # However, meta info (title / author / time / cover) is always available.
 ```
+
+### Which path to use
+
+| Situation | Path |
+|---|---|
+| Default / unknown | `fetch_fast.py` first, fall back on `< 200 chars` or a captcha marker |
+| Known captcha wall or CSR-heavy articles | `wechat_article.py` directly |
+| Only need title / author / timestamp | `wechat_article.py --no-content` |
+| Need repost links | `wechat_article.py --sogou "<title>"` |
 
 ## Fetching Strategy (4 Tiers)
 
@@ -216,6 +254,7 @@ print(f"Body: {result.content_md[:200]}...")
 
 | Scenario                              | Description                                                            | Workaround                                                       |
 |---------------------------------------|------------------------------------------------------------------------|------------------------------------------------------------------|
+| Pure-image articles (`#js_image_content`) | The whole article is long images; the body exists only inside the WeChat in-app WebView | No headless browser can read it — ask the user to save the images and OCR them. See [references/pure-image-articles.md](references/pure-image-articles.md) |
 | Captcha wall ("环境异常" / environment abnormal) | Meta is empty                                                          | Chrome bypass (80%+ pass) → on failure → Sogou repost            |
 | CSR dynamic rendering                 | `curl` returns empty `js_content`                                      | Chrome headless fetches post-SSR HTML                             |
 | Video / audio embeds                  | Turndown simplifies to `<video>`/`<audio>` tags                        | Markdown renderer must support them                               |
@@ -235,7 +274,13 @@ No. The current version doesn't implement login state. If login-gated article su
 Sogou has rate limiting. Recommend no more than 5 QPS, with at least 2s sleep between calls. The code already includes rate-limit detection (captcha / security verification / "访问过于频繁" / too-frequent access); on hit, it returns an empty result.
 
 ### Q: Can I run it without Chrome?
-Yes. With the `--no-chrome` flag, articles behind captcha or limited by CSR cannot have their body fetched, but meta info (title, author, time, cover) is always available.
+Yes. With the `--no-chrome` flag, articles behind captcha or limited by CSR cannot have their body fetched, but meta info (title, author, time, cover) is always available. The fast path (`scripts/fetch_fast.py`) never uses Chrome at all.
+
+### Q: What is the "fast path" and when should I use it?
+`scripts/fetch_fast.py` sends a desktop-browser UA with plain `curl`; WeChat then server-renders `#js_content` and a regex extracts it — 2–3 s, zero dependencies, no Chrome launch. Use it by default and fall back to the 4-tier chain when it prints a `NOTE:` (body under 200 chars, or a captcha marker was found). Details in [references/fast-path.md](references/fast-path.md).
+
+### Q: The article body ends with WeChat UI garbage ("微信扫一扫 / 赞 / 在看") — why?
+The extraction boundary was greedy and swallowed the ~2.9 MB of chrome that trails the article. Use a bounded match: non-greedy up to `</div><script`, falling back to `<div class="rich_media_tool"`, then strip the `WX_CLEAN_SELECTORS` list. See [references/fast-path.md](references/fast-path.md).
 
 ## Contributing
 
@@ -245,3 +290,11 @@ Issues and PRs are welcome! Areas worth focusing on:
 - [ ] Table-to-Markdown conversion
 - [ ] Docker image / pip package
 - [ ] More anti-crawl strategy adapters
+
+## References
+
+- [references/fast-path.md](references/fast-path.md) — fast-path mechanics and the extraction-boundary trap
+- [references/wechat-anti-crawl.md](references/wechat-anti-crawl.md) — captcha signatures and meta extraction
+- [references/pure-image-articles.md](references/pure-image-articles.md) — the `#js_image_content` format and how to handle it honestly
+- [references/collection-article-pattern.md](references/collection-article-pattern.md) — collection article + GitHub repo handling flow
+- [references/changelog.md](references/changelog.md) — version history

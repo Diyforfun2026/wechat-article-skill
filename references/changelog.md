@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.2.0 — 2026-10-30
+
+### Added
+- **`scripts/fetch_fast.py`** — fast path: desktop-browser UA + plain `curl` + regex extraction.
+  - 2–3 s per article, **zero third-party dependencies, zero Chrome launches**
+  - A desktop UA makes WeChat server-render `#js_content`; the WeChat in-app UA does not
+  - Supports `--title`, `--json`, `-o out.md`
+  - Prints a `NOTE:` to stderr when the body is under 200 chars or a captcha marker is present —
+    that is the signal to fall back to the 4-tier chain
+- **`references/fast-path.md`** — why the fast path works, and the extraction-boundary trap
+  (a greedy `.*` swallows ~2.9 MB of trailing WeChat UI chrome)
+- **`references/pure-image-articles.md`** — the `#js_image_content` format: 5 diagnostic signals,
+  a 2-second diagnosis snippet, and the honest "ask the user to send the images" workflow
+- **`references/collection-article-pattern.md`** — collection article + GitHub repo handling flow
+  (fetch the collection, list `examples/`, pull the README via jsdelivr, then stop)
+- **`LICENSE`** — the MIT file the README badge already pointed at (it was a 404)
+
+### Fixed
+- `fetch_fast.py` extraction boundary: bounded (non-greedy) match up to `</div><script`, falling back
+  to `<div class="rich_media_tool"` — the greedy version produced a body ending in several hundred
+  lines of "微信扫一扫 / 赞 / 在看" UI garbage
+- `fetch_fast.py` now strips WeChat-specific UI selectors (`rich_media_tool`, `qr_code_pc`,
+  `reward_area`, `js_pc_qr_code`, …), the same `WX_CLEAN_SELECTORS` list the 4-tier chain uses
+- `fetch_fast.py` now preserves links, images, headings and inline formatting instead of flattening
+  everything to plain text
+
+### Changed
+- `README.md` — rewritten in Chinese-first bilingual form: two fetching paths, an Agent-skill
+  install section, a known-limitations table, and a tag list
+- `SKILL.md` — version 1.2.0; documents the fast path, the path-selection table, and the
+  fast-path/fallback rule
+- Repository topics set for discoverability
+
 ## 1.1.0 — 2026-06-15
 
 ### Internationalisation
