@@ -79,7 +79,7 @@ is a stable mirror. Fallback: `https://ghproxy.net/https://raw.githubusercontent
 **Original**: <collection mp.weixin URL>
 **Fetched**: YYYY-MM-DD
 **Status**: the original is archived at `<path>`; this file is the **learning path + technique
-extraction + fit assessment for our own project**
+extraction + fit assessment for your own project**
 
 ---
 
@@ -87,7 +87,7 @@ extraction + fit assessment for our own project**
 [chip, pin map, board]
 
 ## 2. The N examples in the repository
-| directory | concept | relevance to our project |
+| directory | concept | relevance to your project |
 |---|---|---|
 
 ## 3. The published articles
@@ -96,7 +96,7 @@ extraction + fit assessment for our own project**
 ## 4. Recommended learning path (4 weeks)
 [week by week, what to do each day]
 
-## 5. Fit for our project
+## 5. Fit for your project
 ### ✅ directly reusable
 ### ⚠️ usable with modification
 ### ❌ not applicable
@@ -122,7 +122,7 @@ tutorial.
 1. ❌ Loop `wechat_article.py` over all 15+ sub-articles
 2. ❌ Make the summary a copy of the collection's table of contents (no added information)
 3. ❌ Skip the GitHub repository (missing the most durable asset)
-4. ❌ Write a summary unrelated to your own project (it becomes generic trivia, not team knowledge)
+4. ❌ Write a summary unrelated to your own project (it becomes generic trivia, not reusable knowledge)
 5. ❌ Fetch the README via `raw.githubusercontent.com` (frequently times out)
 
 ## Related
